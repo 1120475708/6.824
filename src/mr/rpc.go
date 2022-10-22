@@ -26,9 +26,24 @@ type ExampleReply struct {
 type GetTaskReq struct {
 }
 type GetTaskResp struct {
-	Name string
-	Num  int
+	TaskType int
+	FileName string
 }
+
+type FinishTaskReq struct {
+	TaskType int
+	IP       string
+	Port     string
+}
+type FinishTaskResp struct {
+}
+
+const (
+	MapTask = iota
+	ReduceTask
+	WaitingTask
+	ExitTask
+)
 
 // Cook up a unique-ish UNIX-domain socket Name
 // in /var/tmp, for the coordinator.

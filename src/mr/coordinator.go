@@ -1,8 +1,9 @@
 package mr
 
 import (
-	"fmt"
 	"log"
+	"sync"
+	"time"
 )
 import "net"
 import "net/rpc"
@@ -10,8 +11,24 @@ import "net/http"
 
 type Coordinator struct {
 	// Your definitions here.
-	files     []string
-	reduceNum int
+	Files             []string
+	ReduceNum         int
+	IsClosed          bool
+	MapTask           chan string
+	ReduceTask        chan MapWorker
+	MapTaskStatus     map[string]MapWorker
+	ReduceTaskStatus  map[string]bool
+	LeftMapTaskNum    int
+	LeftReduceTaskNum int
+	TaskType          int
+	lock              sync.Mutex
+}
+
+type MapWorker struct {
+	IsFinished bool
+	IP         string
+	Port       string
+	FileName   string
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -26,16 +43,19 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 	return nil
 }
 
-type task struct {
-	taskName  string
-	reduceNum int
-}
-
 func (c *Coordinator) GetTask(req *GetTaskReq, resp *GetTaskResp) error {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	resp.TaskType = c.TaskType
+	switch resp.TaskType {
+	case MapTask:
+		resp.FileName = <-c.MapTask
+	case ReduceTask:
+	case WaitingTask:
+	case ExitTask:
 
-	resp.Name = c.files[0]
-	resp.Num = c.reduceNum
-	fmt.Println("Get Task Success!")
+	}
+
 	return nil
 
 }
@@ -61,11 +81,17 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 //
 func (c *Coordinator) Done() bool {
-	ret := false
-
 	// Your code here.
+	return c.IsClosed
+}
+func Daemon(c *Coordinator) {
+	for {
+		c.lock.Lock()
 
-	return ret
+		c.lock.Unlock()
+		time.Sleep(time.Second)
+
+	}
 }
 
 //
@@ -74,13 +100,25 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
+	mapTask := make(chan string, 64)
+	for _, file := range files {
+		mapTask <- file
+	}
 	c := Coordinator{
-		files:     files,
-		reduceNum: nReduce,
+		Files:             files,
+		ReduceNum:         nReduce,
+		IsClosed:          false,
+		MapTask:           mapTask,
+		ReduceTask:        nil,
+		MapTaskStatus:     make(map[string]MapWorker),
+		ReduceTaskStatus:  nil,
+		LeftMapTaskNum:    len(files),
+		LeftReduceTaskNum: 0,
+		TaskType:          MapTask,
 	}
 
 	// Your code here.
-
+	go Daemon(&c)
 	c.server()
 	return &c
 }

@@ -31,11 +31,11 @@ func ihash(key string) int {
 //
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-	ans := GetTaskResp{}
+	resp := GetTaskResp{}
 	req := GetTaskReq{}
-	call("Coordinator.GetTask", &req, &ans)
+	call("Coordinator.GetTask", &req, &resp)
 
-	fmt.Println("Debug ", ans)
+	fmt.Println("Debug ", resp)
 
 	time.Sleep(100 * time.Second)
 
