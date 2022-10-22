@@ -1,10 +1,12 @@
 package mr
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 import "log"
 import "net/rpc"
 import "hash/fnv"
-
 
 //
 // Map functions return a slice of KeyValue.
@@ -24,12 +26,18 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
 //
 // main/mrworker.go calls this function.
 //
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
+	ans := GetTaskResp{}
+	req := GetTaskReq{}
+	call("Coordinator.GetTask", &req, &ans)
+
+	fmt.Println("Debug ", ans)
+
+	time.Sleep(100 * time.Second)
 
 	// Your worker implementation here.
 
@@ -65,6 +73,7 @@ func CallExample() {
 	} else {
 		fmt.Printf("call failed!\n")
 	}
+
 }
 
 //
@@ -73,9 +82,9 @@ func CallExample() {
 // returns false if something goes wrong.
 //
 func call(rpcname string, args interface{}, reply interface{}) bool {
-	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
-	sockname := coordinatorSock()
-	c, err := rpc.DialHTTP("unix", sockname)
+	c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
+	//sockname := coordinatorSock()
+	//c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
 		log.Fatal("dialing:", err)
 	}
