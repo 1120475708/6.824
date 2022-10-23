@@ -15,8 +15,8 @@ type Coordinator struct {
 	ReduceNum         int
 	IsClosed          bool
 	MapTask           chan string
-	ReduceTask        chan MapWorker
-	MapTaskStatus     map[string]MapWorker
+	ReduceTask        chan *MapWorker
+	MapTaskStatus     map[string]*MapWorker
 	ReduceTaskStatus  map[string]bool
 	LeftMapTaskNum    int
 	LeftReduceTaskNum int
@@ -25,10 +25,10 @@ type Coordinator struct {
 }
 
 type MapWorker struct {
-	IsFinished bool
-	IP         string
-	Port       string
-	FileName   string
+	Status   int
+	IP       string
+	Port     string
+	FileName string
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -87,7 +87,31 @@ func (c *Coordinator) Done() bool {
 func Daemon(c *Coordinator) {
 	for {
 		c.lock.Lock()
+		if c.TaskType == MapTask {
+			for key, val := range c.MapTaskStatus {
+				if val.Status == InProcess {
+					req := GetWorkerStatusReq{
+						FileName: key,
+					}
+					resp := GetWorkerStatusResp{}
+					//optimize : try again
+					if !call("WorkerProcess.GetWorkerStatus", req, resp, val.IP, val.Port) {
+						c.MapTask <- key
+						delete(c.MapTaskStatus, key)
+					} else {
+						if resp.Status == Finished {
+							c.MapTaskStatus[key].Status = Finished
+							c.LeftMapTaskNum--
+						}
+					}
+				}
+			}
+			if c.LeftMapTaskNum == 0 {
+				c.TaskType = ReduceTask
+			}
+		}
 
+		//TODO ask Reduce Task
 		c.lock.Unlock()
 		time.Sleep(time.Second)
 
@@ -110,7 +134,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		IsClosed:          false,
 		MapTask:           mapTask,
 		ReduceTask:        nil,
-		MapTaskStatus:     make(map[string]MapWorker),
+		MapTaskStatus:     make(map[string]*MapWorker),
 		ReduceTaskStatus:  nil,
 		LeftMapTaskNum:    len(files),
 		LeftReduceTaskNum: 0,

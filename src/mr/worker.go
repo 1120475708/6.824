@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"time"
 )
-import "log"
-import "net/rpc"
 import "hash/fnv"
 
 //
@@ -29,15 +27,40 @@ func ihash(key string) int {
 //
 // main/mrworker.go calls this function.
 //
+
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-	resp := GetTaskResp{}
-	req := GetTaskReq{}
-	call("Coordinator.GetTask", &req, &resp)
+	c := WorkerProcess{
+		IP:          IPAddress,
+		Port:        GetPort(),
+		StatusTable: map[string]int{},
+	}
+	c.server()
 
-	fmt.Println("Debug ", resp)
+	for {
+		resp := GetTaskResp{}
+		req := GetTaskReq{}
+		call("Coordinator.GetTask", &req, &resp, IPAddress, CoordinatorPort)
+		switch resp.TaskType {
+		case MapTask:
 
-	time.Sleep(100 * time.Second)
+		case ReduceTask:
+
+		case WaitingTask:
+			time.Sleep(1 * time.Second)
+		case ExitTask:
+			return
+		}
+
+	}
+
+	//resp := GetTaskResp{}
+	//req := GetTaskReq{}
+	//call("Coordinator.GetTask", &req, &resp)
+	//
+	//fmt.Println("Debug ", resp)
+	//
+	//time.Sleep(100 * time.Second)
 
 	// Your worker implementation here.
 
@@ -66,7 +89,7 @@ func CallExample() {
 	// the "Coordinator.Example" tells the
 	// receiving server that we'd like to call
 	// the Example() method of struct Coordinator.
-	ok := call("Coordinator.Example", &args, &reply)
+	ok := call("Coordinator.Example", &args, &reply, IPAddress, CoordinatorPort)
 	if ok {
 		// reply.Y should be 100.
 		fmt.Printf("reply.Y %v\n", reply.Y)
@@ -74,27 +97,4 @@ func CallExample() {
 		fmt.Printf("call failed!\n")
 	}
 
-}
-
-//
-// send an RPC request to the coordinator, wait for the response.
-// usually returns true.
-// returns false if something goes wrong.
-//
-func call(rpcname string, args interface{}, reply interface{}) bool {
-	c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
-	//sockname := coordinatorSock()
-	//c, err := rpc.DialHTTP("unix", sockname)
-	if err != nil {
-		log.Fatal("dialing:", err)
-	}
-	defer c.Close()
-
-	err = c.Call(rpcname, args, reply)
-	if err == nil {
-		return true
-	}
-
-	fmt.Println(err)
-	return false
 }

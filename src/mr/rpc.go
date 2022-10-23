@@ -24,26 +24,20 @@ type ExampleReply struct {
 
 // Add your RPC definitions here.
 type GetTaskReq struct {
+	IP   string
+	Port string
 }
 type GetTaskResp struct {
 	TaskType int
 	FileName string
 }
 
-type FinishTaskReq struct {
-	TaskType int
-	IP       string
-	Port     string
+type GetWorkerStatusReq struct {
+	FileName string
 }
-type FinishTaskResp struct {
+type GetWorkerStatusResp struct {
+	Status int
 }
-
-const (
-	MapTask = iota
-	ReduceTask
-	WaitingTask
-	ExitTask
-)
 
 // Cook up a unique-ish UNIX-domain socket Name
 // in /var/tmp, for the coordinator.
