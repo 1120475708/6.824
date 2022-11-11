@@ -21,11 +21,47 @@ import (
 	//	"bytes"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	//	"6.824/labgob"
 	"6.824/labrpc"
 )
 
+// Status 节点的角色
+type Status int
+
+// VoteState 投票的状态 2A
+type VoteState int
+
+// AppendEntriesState 追加日志的状态 2A 2B
+type AppendEntriesState int
+
+// HeartBeatTimeout 定义一个全局心跳超时时间
+var HeartBeatTimeout = 120 * time.Millisecond
+
+// 枚举节点的类型：跟随者、竞选者、领导者
+const (
+	Follower Status = iota
+	Candidate
+	Leader
+)
+
+const (
+	Normal VoteState = iota //投票过程正常
+	Killed                  //Raft节点已终止
+	Expire                  //投票(消息\竞选者）过期
+	Voted                   //本Term内已经投过票
+)
+
+//TODO
+const (
+	AppNormal    AppendEntriesState = iota // 追加正常
+	AppOutOfDate                           // 追加过时
+	AppKilled                              // Raft程序终止
+	AppRepeat                              // 追加重复 (2B
+	AppCommited                            // 追加的日志已经提交 (2B
+	Mismatch                               // 追加不匹配 (2B
+)
 
 //
 // as each Raft peer becomes aware that successive log entries are
@@ -64,15 +100,86 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
+	// 所有的servers需要持久化的变量:
+	currentTerm int        // 记录当前的任期
+	votedFor    int        // 记录当前的任期把票投给了谁
+	logs        []LogEntry // 日志条目数组，包含了状态机要执行的指令集，以及收到领导时的任期号
+
+	// 对于正常流程来说应该先applyLog进chan里，然后更新commit，最后两者应该是相同的，只是先后更新顺序不同
+	commitIndex int
+	lastApplied int
+
+	// nextIndex与matchIndex初始化长度应该为len(peers)，Leader对于每个Follower都记录他的nextIndex和matchIndex
+	// nextIndex指的是下一个的appendEntries要从哪里开始
+	// matchIndex指的是已知的某follower的log与leader的log最大匹配到第几个Index,已经apply
+	nextIndex  []int // 对于每一个server，需要发送给他下一个日志条目的索引值（初始化为leader日志index+1,那么范围就对标len）
+	matchIndex []int // 对于每一个server，已经复制给该server的最后日志条目下标
+
+	applyChan chan ApplyMsg // 用来写入通道
+
+	// paper外自己追加的
+	status     Status
+	voteNum    int // 记录当前投票给了谁
+	votedTimer time.Time
+
+	// 2D中用于传入快照点
+	lastIncludeIndex int
+	lastIncludeTerm  int
+}
+
+type LogEntry struct {
+	Term    int
+	Command interface{}
+}
+
+// -------------------------RPC参数部分----------------------------
+type RequestVoteArgs struct {
+	// Your data here (2A, 2B).
+	Term         int //	需要竞选的人的任期
+	CandidateId  int // 需要竞选的人的Id
+	LastLogIndex int // 竞选人日志条目最后索引(2D包含快照
+	LastLogTerm  int // 候选人最后日志条目的任期号(2D包含快照
+}
+
+// RequestVoteReply
+// example RequestVote RPC reply structure.
+// field names must start with capital letters!
+//
+type RequestVoteReply struct {
+	// Your data here (2A).
+	Term        int  // 投票方的term，如果竞选者比自己还低就改为这个
+	VoteGranted bool // 是否投票给了该竞选人
+}
+
+// AppendEntriesArgs Append Entries RPC structure
+type AppendEntriesArgs struct {
+	Term         int        // leader的任期
+	LeaderId     int        // leader自身的ID
+	PrevLogIndex int        // 用于匹配日志位置是否是合适的，初始化rf.nextIndex[i] - 1
+	PrevLogTerm  int        // 用于匹配日志的任期是否是合适的是，是否有冲突
+	Entries      []LogEntry // 预计存储的日志（为空时就是心跳连接）
+	LeaderCommit int        // leader的commit index指的是最后一个被大多数机器都复制的日志Index
+}
+
+type AppendEntriesReply struct {
+	Term        int  // leader的term可能是过时的，此时收到的Term用于更新他自己
+	Success     bool //	如果follower与Args中的PreLogIndex/PreLogTerm都匹配才会接过去新的日志（追加），不匹配直接返回false
+	UpNextIndex int  // 如果发生conflict时reply传过来的正确的下标用于更新nextIndex[i]
 }
 
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
 	var term int
 	var isleader bool
 	// Your code here (2A).
+
+	//term =
+
 	return term, isleader
 }
 
@@ -91,7 +198,6 @@ func (rf *Raft) persist() {
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
 }
-
 
 //
 // restore previously persisted state.
@@ -115,7 +221,6 @@ func (rf *Raft) readPersist(data []byte) {
 	// }
 }
 
-
 //
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
 // have more recent info since it communicate the snapshot on applyCh.
@@ -134,23 +239,6 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
 
-}
-
-
-//
-// example RequestVote RPC arguments structure.
-// field names must start with capital letters!
-//
-type RequestVoteArgs struct {
-	// Your data here (2A, 2B).
-}
-
-//
-// example RequestVote RPC reply structure.
-// field names must start with capital letters!
-//
-type RequestVoteReply struct {
-	// Your data here (2A).
 }
 
 //
@@ -194,7 +282,6 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -215,7 +302,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (2B).
-
 
 	return index, term, isLeader
 }
@@ -278,7 +364,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
-
 
 	return rf
 }
