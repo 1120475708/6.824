@@ -86,15 +86,27 @@ type ApplyMsg struct {
 	SnapshotIndex int
 }
 
+const (
+
+	// MoreVoteTime MinVoteTime 定义随机生成投票过期时间范围:(MoreVoteTime+MinVoteTime~MinVoteTime)
+	MoreVoteTime = 100
+	MinVoteTime  = 75
+
+	// HeartbeatSleep 心脏休眠时间,要注意的是，这个时间要比选举低，才能建立稳定心跳机制
+	HeartbeatSleep = 35
+	AppliedSleep   = 15
+)
+
 //
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	mu        sync.Mutex          // Lock to protect shared access to this peer's state
-	peers     []*labrpc.ClientEnd // RPC end points of all peers
-	persister *Persister          // Object to hold this peer's persisted state
-	me        int                 // this peer's index into peers[]
-	dead      int32               // set by Kill()
+	mu    sync.Mutex          // Lock to protect shared access to this peer's state
+	peers []*labrpc.ClientEnd // RPC end points of all peers
+	//没太理解是做什么的
+	persister *Persister // Object to hold this peer's persisted state
+	me        int        // this peer's index into peers[]
+	dead      int32      // set by Kill()
 
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
@@ -177,7 +189,6 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isleader bool
 	// Your code here (2A).
-
 	//term =
 
 	return term, isleader
@@ -358,12 +369,71 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
+	rf.mu.Lock()
 
-	// initialize from state persisted before a crash
+	rf.status = Follower
+	rf.currentTerm = 0
+	rf.voteNum = 0
+	rf.votedFor = -1
+
+	rf.lastApplied = 0
+	rf.commitIndex = 0
+
+	rf.lastIncludeIndex = 0
+	rf.lastIncludeTerm = 0
+
+	rf.logs = []LogEntry{}
+	rf.logs = append(rf.logs, LogEntry{})
+	rf.applyChan = applyCh
+	rf.mu.Unlock()
+
+	// initialize from status persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
-	// start ticker goroutine to start elections
-	go rf.ticker()
+	// 同步快照信息
+	if rf.lastIncludeIndex > 0 {
+		rf.lastApplied = rf.lastIncludeIndex
+	}
+
+	go rf.electionTicker()
+	//
+	//go rf.appendTicker()
+	//
+	//go rf.committedTicker()
 
 	return rf
 }
+
+// ---------------------心跳部分-----------------------------------
+func (rf *Raft) electionTicker() {
+	for rf.killed() == false {
+		nowTime := time.Now()
+		time.Sleep(time.Duration(generateOverTime(int64(rf.me))) * time.Millisecond)
+		rf.mu.Lock()
+
+		// 时间过期发起选举
+		// 此处的流程为每次每次votedTimer如果小于在sleep睡眠之前定义的时间，就代表没有votedTimer没被更新为最新的时间，则发起选举
+		if rf.votedTimer.Before(nowTime) && rf.status != Leader {
+			// 转变状态
+			rf.status = Candidate
+			rf.votedFor = rf.me
+			rf.voteNum = 1
+			rf.currentTerm += 1
+			rf.persist()
+
+			//fmt.Printf("[++++elect++++] :Rf[%v] send a election\n", rf.me)
+			rf.sendElection()
+			rf.votedTimer = time.Now()
+		}
+		rf.mu.Unlock()
+	}
+}
+
+//---------------------------------------leader选举部分-------------------------------------
+
+func (rf *Raft) sendElection() {
+
+}
+
+//---------------------------------------日志增量部分------------------------------------------
+func (rf *Raft) leaderAppendEntries() {}
