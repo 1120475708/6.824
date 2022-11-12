@@ -199,6 +199,7 @@ func (rf *Raft) GetState() (int, bool) {
 // where it can later be retrieved after a crash and restart.
 // see paper's Figure 2 for a description of what should be persistent.
 //
+//TODO what it is
 func (rf *Raft) persist() {
 	// Your code here (2C).
 	// Example:
@@ -432,7 +433,80 @@ func (rf *Raft) electionTicker() {
 //---------------------------------------leader选举部分-------------------------------------
 
 func (rf *Raft) sendElection() {
+	for i := 0; i < len(rf.peers); i++ {
+		if i == rf.me {
+			continue
+		}
 
+		// 开启协程对各个节点发起选举
+		go func(server int) {
+			rf.mu.Lock()
+			args := RequestVoteArgs{
+				rf.currentTerm,
+				rf.me,
+				rf.getLastIndex(),
+				rf.getLastTerm(),
+			}
+			reply := RequestVoteReply{}
+			rf.mu.Unlock()
+			res := rf.sendRequestVote(server, &args, &reply)
+
+			if res == true {
+				rf.mu.Lock()
+				// 判断自身是否还是竞选者，且任期不冲突
+				if rf.status != Candidate || args.Term < rf.currentTerm {
+					rf.mu.Unlock()
+					return
+				}
+
+				// 返回者的任期大于args（网络分区原因)进行返回
+				if reply.Term > args.Term {
+					if rf.currentTerm < reply.Term {
+						rf.currentTerm = reply.Term
+					}
+					rf.status = Follower
+					rf.votedFor = -1
+					rf.voteNum = 0
+					//TODO what is it
+					rf.persist()
+					rf.mu.Unlock()
+					return
+				}
+
+				// 返回结果正确判断是否大于一半节点同意
+				if reply.VoteGranted == true && rf.currentTerm == args.Term {
+					rf.voteNum += 1
+					if rf.voteNum >= len(rf.peers)/2+1 {
+
+						//fmt.Printf("[++++elect++++] :Rf[%v] to be leader,term is : %v\n", rf.me, rf.currentTerm)
+						rf.status = Leader
+						rf.votedFor = -1
+						rf.voteNum = 0
+						rf.persist()
+
+						rf.nextIndex = make([]int, len(rf.peers))
+						for i := 0; i < len(rf.peers); i++ {
+							rf.nextIndex[i] = rf.getLastIndex() + 1
+						}
+
+						rf.matchIndex = make([]int, len(rf.peers))
+						rf.matchIndex[rf.me] = rf.getLastIndex()
+
+						rf.votedTimer = time.Now()
+						rf.mu.Unlock()
+						return
+					}
+					rf.mu.Unlock()
+					return
+				}
+
+				rf.mu.Unlock()
+				return
+			}
+
+		}(i)
+
+	}
 }
 
 //---------------------------------------日志增量部分------------------------------------------
