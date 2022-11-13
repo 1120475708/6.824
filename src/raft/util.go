@@ -40,3 +40,11 @@ func (rf *Raft) getLastTerm() int {
 func (rf *Raft) restoreLog(curIndex int) LogEntry {
 	return rf.logs[curIndex-rf.lastIncludeIndex]
 }
+
+// UpToDate paper中投票RPC的rule2
+func (rf *Raft) UpToDate(index int, term int) bool {
+	lastIndex := rf.getLastIndex()
+	lastTerm := rf.getLastTerm()
+	//leader任期大于当前任期，leader任期等于当前任期，并且leader日志index大于当前索引
+	return term > lastTerm || (term == lastTerm && index >= lastIndex)
+}
