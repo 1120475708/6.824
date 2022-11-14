@@ -186,12 +186,7 @@ func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	var term int
-	var isleader bool
-	// Your code here (2A).
-	//term =
-
-	return term, isleader
+	return rf.currentTerm, rf.status == Leader
 }
 
 //
@@ -420,6 +415,19 @@ func (rf *Raft) electionTicker() {
 			rf.votedTimer = time.Now()
 		}
 		rf.mu.Unlock()
+	}
+}
+
+func (rf *Raft) appendTicker() {
+	for rf.killed() == false {
+		time.Sleep(HeartbeatSleep * time.Millisecond)
+		rf.mu.Lock()
+		if rf.status == Leader {
+			rf.mu.Unlock()
+			rf.leaderAppendEntries()
+		} else {
+			rf.mu.Unlock()
+		}
 	}
 }
 
