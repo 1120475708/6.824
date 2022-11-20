@@ -17,6 +17,8 @@ package raft
 //   in the same server.
 //
 
+//11.20 Pass lab2A all test cases!
+
 import (
 	//	"bytes"
 	"sync"
