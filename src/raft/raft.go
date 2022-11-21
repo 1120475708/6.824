@@ -105,7 +105,8 @@ const (
 type Raft struct {
 	mu    sync.Mutex          // Lock to protect shared access to this peer's state
 	peers []*labrpc.ClientEnd // RPC end points of all peers
-	//没太理解是做什么的
+
+	//类似于持久化相关的内容
 	persister *Persister // Object to hold this peer's persisted state
 	me        int        // this peer's index into peers[]
 	dead      int32      // set by Kill()
@@ -299,13 +300,22 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
 
 	// Your code here (2B).
-
-	return index, term, isLeader
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if rf.killed() == true {
+		return -1, -1, false
+	}
+	if rf.status != Leader {
+		return -1, -1, false
+	} else {
+		index := rf.getLastIndex() + 1
+		term := rf.currentTerm
+		rf.logs = append(rf.logs, LogEntry{Term: term, Command: command})
+		rf.persist()
+		return index, term, true
+	}
 }
 
 //
@@ -487,11 +497,11 @@ func (rf *Raft) sendElection() {
 						rf.voteNum = 0
 						rf.persist()
 
+						//TODO：question 这一块的意义
 						rf.nextIndex = make([]int, len(rf.peers))
 						for i := 0; i < len(rf.peers); i++ {
 							rf.nextIndex[i] = rf.getLastIndex() + 1
 						}
-
 						rf.matchIndex = make([]int, len(rf.peers))
 						rf.matchIndex[rf.me] = rf.getLastIndex()
 
