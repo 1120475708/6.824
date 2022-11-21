@@ -398,7 +398,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	go rf.electionTicker()
 	//
-	//go rf.appendTicker()
+	go rf.appendTicker()
 	//
 	//go rf.committedTicker()
 
@@ -574,4 +574,129 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 //---------------------------------------日志增量部分------------------------------------------
-func (rf *Raft) leaderAppendEntries() {}
+func (rf *Raft) leaderAppendEntries() {
+	rf.mu.Lock()
+	if rf.status != Leader {
+		rf.mu.Unlock()
+		return
+	}
+	rf.mu.Unlock()
+	for index := range rf.peers {
+		if index == rf.me {
+			continue
+		}
+		go func(server int) {
+			rf.mu.Lock()
+			if rf.status != Leader {
+				rf.mu.Unlock()
+				return
+			}
+
+			//TODO 这里不太懂~
+			//installSnapshot，如果rf.nextIndex[i]-1小于等lastIncludeIndex,说明followers的日志小于自身的快照状态，将自己的快照发过去
+			// 同时要注意的是比快照还小时，已经算是比较落后
+			if rf.nextIndex[server]-1 < rf.lastIncludeIndex {
+				go rf.leaderSendSnapShot(server)
+				rf.mu.Unlock()
+				return
+			}
+			//获取当前Leader的日志下标，获当前Leader的任期
+			prevLogIndex, prevLogTerm := rf.getPrevLogInfo(server)
+			args := AppendEntriesArgs{
+				Term:         rf.currentTerm,
+				LeaderId:     rf.me,
+				PrevLogIndex: prevLogIndex,
+				PrevLogTerm:  prevLogTerm,
+				LeaderCommit: rf.commitIndex,
+			}
+			//对于每个服务器 看看要传递多少日志。
+			if rf.getLastIndex() >= rf.nextIndex[server] {
+				entries := make([]LogEntry, 0)
+				entries = append(entries, rf.logs[rf.nextIndex[server]-rf.lastIncludeIndex:]...)
+				args.Entries = entries
+			} else {
+				args.Entries = []LogEntry{}
+			}
+			reply := AppendEntriesReply{}
+			rf.mu.Unlock()
+
+			re := rf.sendAppendEntries(server, &args, &reply)
+
+			if re == true {
+				rf.mu.Lock()
+				defer rf.mu.Unlock()
+
+				//判断返回后还是leader吗
+				//TODO：确认这两种情况是否存在
+				if rf.status != Leader {
+					return
+				}
+				if reply.Term > rf.currentTerm {
+					rf.currentTerm = reply.Term
+					rf.status = Follower
+					rf.votedFor = -1
+					rf.voteNum = 0
+					rf.persist()
+					rf.votedTimer = time.Now()
+					return
+				}
+
+				if reply.Success {
+					//快照部分
+					rf.commitIndex = rf.lastIncludeIndex
+					rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
+					rf.nextIndex[server] = rf.matchIndex[server] + 1
+
+					// 外层遍历下标是否满足,从快照最后开始反向进行
+					for index := rf.getLastIndex(); index >= rf.lastIncludeIndex+1; index-- {
+						sum := 0
+						for i := 0; i < len(rf.peers); i++ {
+							if i == rf.me {
+								sum += 1
+								continue
+							}
+							if rf.matchIndex[i] >= index {
+								sum += 1
+							}
+						}
+
+						// 大于一半，且因为是从后往前，一定会大于原本commitIndex
+						//TODO 第二个条件
+						if sum >= len(rf.peers)/2+1 && rf.restoreLogTerm(index) == rf.currentTerm {
+							rf.commitIndex = index
+							break
+						}
+
+					}
+				} else { // 返回为冲突
+					// 如果冲突不为-1，则进行更新
+					if reply.UpNextIndex != -1 {
+						rf.nextIndex[server] = reply.UpNextIndex
+					}
+				}
+			}
+
+		}(index)
+
+	}
+
+}
+
+func (rf *Raft) leaderSendSnapShot(server int) {
+
+}
+
+func (rf *Raft) getPrevLogInfo(server int) (int, int) {
+
+	return 1, 1
+}
+
+func (rf *Raft) sendAppendEntries(server int, a *AppendEntriesArgs, a2 *AppendEntriesReply) bool {
+
+	return true
+}
+
+func (rf *Raft) restoreLogTerm(index int) int {
+
+	return 1
+}
