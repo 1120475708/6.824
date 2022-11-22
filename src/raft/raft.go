@@ -600,7 +600,7 @@ func (rf *Raft) leaderAppendEntries() {
 				rf.mu.Unlock()
 				return
 			}
-			//获取当前Leader的日志下标，获当前Leader的任期
+			//新的日志条目紧随之前的索引值  prevLogIndex条目的任期号
 			prevLogIndex, prevLogTerm := rf.getPrevLogInfo(server)
 			args := AppendEntriesArgs{
 				Term:         rf.currentTerm,
@@ -686,9 +686,15 @@ func (rf *Raft) leaderSendSnapShot(server int) {
 
 }
 
+//TODO 该function的内容每太看明白
 func (rf *Raft) getPrevLogInfo(server int) (int, int) {
-
-	return 1, 1
+	newEntryBeginIndex := rf.nextIndex[server] - 1 //server当前存到哪了
+	lastIndex := rf.getLastIndex()                 //leader当前存到哪了
+	//why 如果server存到的位置 等于当前leader存到的位置的下一位（这情况会发生吗 ）
+	if newEntryBeginIndex == lastIndex+1 {
+		newEntryBeginIndex = lastIndex
+	}
+	return newEntryBeginIndex, rf.restoreLogTerm(newEntryBeginIndex)
 }
 
 func (rf *Raft) sendAppendEntries(server int, a *AppendEntriesArgs, a2 *AppendEntriesReply) bool {
@@ -696,7 +702,13 @@ func (rf *Raft) sendAppendEntries(server int, a *AppendEntriesArgs, a2 *AppendEn
 	return true
 }
 
-func (rf *Raft) restoreLogTerm(index int) int {
-
-	return 1
+//TODO:回看该部分内容
+func (rf *Raft) restoreLogTerm(curIndex int) int {
+	// 如果当前index与快照一致/日志为空，直接返回快照/快照初始化信息，否则根据快照计算
+	if curIndex-rf.lastIncludeIndex == 0 {
+		return rf.lastIncludeTerm
+	}
+	//fmt.Printf("[GET] curIndex:%v,rf.lastIncludeIndex:%v\n", curIndex, rf.lastIncludeIndex)
+	//TODO why？
+	return rf.logs[curIndex-rf.lastIncludeIndex].Term
 }

@@ -22,6 +22,7 @@ func generateOverTime(server int64) int {
 }
 
 // 获取最后的快照日志下标(代表已存储）
+//TODO 为什么需要+rf.lastIncludeIndex
 func (rf *Raft) getLastIndex() int {
 	return len(rf.logs) - 1 + rf.lastIncludeIndex
 }
