@@ -49,3 +49,12 @@ func (rf *Raft) UpToDate(index int, term int) bool {
 	//leader任期大于当前任期，leader任期等于当前任期，并且leader日志index大于当前索引
 	return term > lastTerm || (term == lastTerm && index >= lastIndex)
 }
+
+// 最小值min
+func min(num int, num1 int) int {
+	if num > num1 {
+		return num1
+	} else {
+		return num
+	}
+}

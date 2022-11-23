@@ -138,6 +138,7 @@ type Raft struct {
 	votedTimer time.Time
 
 	// 2D中用于传入快照点
+	//IncludeIndex干吗用的
 	lastIncludeIndex int
 	lastIncludeTerm  int
 }
@@ -601,6 +602,7 @@ func (rf *Raft) leaderAppendEntries() {
 				return
 			}
 			//新的日志条目紧随之前的索引值  prevLogIndex条目的任期号
+
 			prevLogIndex, prevLogTerm := rf.getPrevLogInfo(server)
 			args := AppendEntriesArgs{
 				Term:         rf.currentTerm,
@@ -618,6 +620,7 @@ func (rf *Raft) leaderAppendEntries() {
 				args.Entries = []LogEntry{}
 			}
 			reply := AppendEntriesReply{}
+
 			rf.mu.Unlock()
 
 			re := rf.sendAppendEntries(server, &args, &reply)
@@ -682,6 +685,80 @@ func (rf *Raft) leaderAppendEntries() {
 
 }
 
+//TODO 重看内容
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	//defer fmt.Printf("[	AppendEntries--Return-Rf(%v) 	] arg:%+v, reply:%+v\n", rf.me, args, reply)
+
+	// Reply false if term < currentTerm (§5.1)
+	if args.Term < rf.currentTerm {
+		reply.Term = rf.currentTerm
+		reply.Success = false
+		reply.UpNextIndex = -1
+		return
+	}
+
+	reply.Success = true
+	reply.Term = args.Term
+	reply.UpNextIndex = -1
+
+	rf.status = Follower
+	rf.currentTerm = args.Term
+	rf.votedFor = -1
+	rf.voteNum = 0
+	rf.persist()
+	rf.votedTimer = time.Now()
+
+	// TODO 回看该部分内容。
+	// Reply false if log doesn’t contain an entry at prevLogIndex
+	// whose term matches prevLogTerm (§5.3)
+	// 自身的快照Index比发过来的prevLogIndex还大，所以返回冲突的下标加1(原因是冲突的下标用来更新nextIndex，nextIndex比Prev大1
+	// 返回冲突下标的目的是为了减少RPC请求次数
+	if rf.lastIncludeIndex > args.PrevLogIndex {
+		reply.Success = false
+		reply.UpNextIndex = rf.getLastIndex() + 1
+		return
+	}
+
+	// 如果自身最后的快照日志比prev小说明中间有缺失日志，such 3、4、5、6、7 返回的开头为6、7，而自身到4，缺失5
+	// TODO 为什么LastIndex会跟PrevLogIndex不一样 ？ 这里为什么只标记了小于
+	if rf.getLastIndex() < args.PrevLogIndex {
+		reply.Success = false
+		reply.UpNextIndex = rf.getLastIndex()
+		return
+	} else {
+		//TODO 日志任期 与发送来的任期不符  Q:为什么会存在不符合的情况
+		if rf.restoreLogTerm(args.PrevLogIndex) != args.PrevLogTerm {
+			reply.Success = false
+			tempTerm := rf.restoreLogTerm(args.PrevLogIndex)
+			//
+			for index := args.PrevLogIndex; index >= rf.lastIncludeIndex; index-- {
+				if rf.restoreLogTerm(index) != tempTerm {
+					reply.UpNextIndex = index + 1
+					break
+				}
+			}
+			return
+		}
+	}
+
+	// If an existing entry conflicts with a new one (same index
+	// but different terms), delete the existing entry and all that follow it (§5.3)
+	// Append any new entries not already in the log
+	// 进行日志的截取
+	rf.logs = append(rf.logs[:args.PrevLogIndex+1-rf.lastIncludeIndex], args.Entries...)
+	rf.persist()
+
+	//If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
+	// commitIndex取leaderCommit与last new entry最小值的原因是，虽然应该更新到leaderCommit，但是new entry的下标更小
+	// 则说明日志不存在，更新commit的目的是为了applied log，这样会导致日志日志下标溢出
+	if args.LeaderCommit > rf.commitIndex {
+		rf.commitIndex = min(args.LeaderCommit, rf.getLastIndex())
+	}
+	return
+}
+
 func (rf *Raft) leaderSendSnapShot(server int) {
 
 }
@@ -697,9 +774,9 @@ func (rf *Raft) getPrevLogInfo(server int) (int, int) {
 	return newEntryBeginIndex, rf.restoreLogTerm(newEntryBeginIndex)
 }
 
-func (rf *Raft) sendAppendEntries(server int, a *AppendEntriesArgs, a2 *AppendEntriesReply) bool {
-
-	return true
+func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	return ok
 }
 
 //TODO:回看该部分内容
